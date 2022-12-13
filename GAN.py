@@ -1,9 +1,27 @@
+import torch
+import torchvision
+import ignite
+import os
+import logging
+import matplotlib.pyplot as plt
+import numpy as np
+from torchsummary import summary
+import torch.nn as nn
+import torch.optim as optim
+import torchvision.transforms as transforms
+import torchvision.utils as vutils
+from ignite.engine import Engine, Events
+import ignite.distributed as idist
+from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
 import glob
 import cv2
-import numpy as np
-import torch
-from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
 
+# Reproductibility and logging details
+ignite.utils.manual_seed(999)
+
+# Optionally, the logging level logging.WARNING is used in internal ignite submodules in order to avoid internal messages.
+ignite.utils.setup_logger(name="ignite.distributed.auto.auto_dataloader", level=logging.WARNING)
+ignite.utils.setup_logger(name="ignite.distributed.launcher.Parallel", level=logging.WARNING)
 
 # create custom dataset
 class FingerprintDataset(Dataset):
@@ -46,12 +64,9 @@ class FingerprintDataset(Dataset):
         return len(self.class_map)
 
 
+# data load
 dataset = FingerprintDataset()
-data_loader = DataLoader(dataset, batch_size=16, shuffle=True)
-for images, labels in data_loader:
-    print("Batch of images has shape: ", images.shape)
-    print("Batch of labels has shape: ", labels.shape)
-
+#data_loader = DataLoader(dataset, batch_size=16, shuffle=True)
 batch_size = 16
 validation_split = .2
 shuffle_dataset = True
@@ -67,11 +82,34 @@ if shuffle_dataset:
 train_indices, val_indices = indices[split:], indices[:split]
 
 
-# Creating PT data samplers and loaders:
-train_sampler = SubsetRandomSampler(train_indices)
-valid_sampler = SubsetRandomSampler(val_indices)
+# image size
+image_size = 300
+data_transform = transforms.Compose(
+    [
+        transforms.Resize(image_size),
+        transforms.CenterCrop(image_size),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+    ]
+)
 
-train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
-                                           sampler=train_sampler)
-validation_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
-                                                sampler=valid_sampler)
+train_dataset = torch.utils.data.Subset(dataset, train_indices)
+test_dataset = torch.utils.data.Subset(dataset, val_indices)
+
+train_dataloader = idist.auto_dataloader(
+    train_dataset,
+    batch_size=batch_size,
+    num_workers=2,
+    shuffle=True,
+    drop_last=True,
+)
+
+test_dataloader = idist.auto_dataloader(
+    test_dataset,
+    batch_size=batch_size,
+    num_workers=2,
+    shuffle=False,
+    drop_last=True,
+)
+real_batch = next(iter(train_dataloader))
+print(real_batch)
